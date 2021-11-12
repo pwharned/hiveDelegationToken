@@ -28,7 +28,7 @@ object TokenWriter  {
   object JDBCTest {
 
     val driverName = "org.apache.hive.jdbc.HiveDriver"
-    var connectURL = "jdbc:hive2://udoddlmstr02.unix.rgbk.com:2181,udoddlmstr01.unix.rgbk.com:2181,udoddlmstr03.unix.rgbk.com:2181/;serviceDiscoveryMode=zooKeeper;zooKeeperNamespace=hiveserver2"
+    var connectURL = "jdbc:hive2://host.domain.com:2181,host.domain.com:2181,host.domain.com:2181/;serviceDiscoveryMode=zooKeeper;zooKeeperNamespace=hiveserver2"
    
     var path: String = "/home/spark/spark-events/hadoop/"
    
@@ -38,13 +38,13 @@ object TokenWriter  {
     }
    
     val schemaName = "dm_wm"
-    val principal = "svc_pwm_ret"
+    val principal = "principal"
    
     var krb5conf = path + "krb5.conf"
 
-    val realm = "CORP.RGBK.COM"
+    val realm = "DOMAIN.CORP.COM"
    
-    var keytab: String = path + "svc_pwm_ret.keytab"
+    var keytab: String = path + "principal.keytab"
    
    
     val conf = new Configuration()
