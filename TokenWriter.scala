@@ -1,3 +1,4 @@
+import java.io.File
 import java.io.FileWriter
 import java.io.PrintStream
 import java.io.PrintWriter
@@ -12,36 +13,53 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.hive.shims.Utils
 import org.apache.hadoop.security.UserGroupInformation
 import org.apache.hive.jdbc.HiveConnection
+import scala.io.Source
+import org.apache.hadoop.fs.FileSystem
+import org.apache.hadoop.security.Credentials
+import org.apache.hadoop.fs.Path
+import java.io.DataOutputStream
+import java.io.ByteArrayOutputStream
+import org.apache.hadoop.security.token.Token
+import org.apache.hadoop.io.Text
+
 
 object TokenWriter  {
 
   object JDBCTest {
 
     val driverName = "org.apache.hive.jdbc.HiveDriver"
-    var connectURL = "jdbc:hive2://<host>10000/dm_wm"
-    val path: String = "/home/spark/spark-events/hadoop/"
+    var connectURL = "jdbc:hive2://udoddlmstr02.unix.rgbk.com:2181,udoddlmstr01.unix.rgbk.com:2181,udoddlmstr03.unix.rgbk.com:2181/;serviceDiscoveryMode=zooKeeper;zooKeeperNamespace=hiveserver2"
    
-    connectURL="jdbc:hive2://<host>0.:2181,<host>2.:2181,<host>1.:2181/;serviceDiscoveryMode=zooKeeper;zooKeeperNamespace=hiveserver2"
-
-    val schemaName = "schemaname"
-    val principal = "principal"
+    var path: String = "/home/spark/spark-events/hadoop/"
+   
+    var directory = new File(path)
+    if (!directory.exists){
+      path = "/home/cdsw/drift/hadoop/"
+    }
+   
+    val schemaName = "dm_wm"
+    val principal = "svc_pwm_ret"
+   
     var krb5conf = path + "krb5.conf"
-    val realm = "CORP.RGBK.COM"
-    var keytab: String = path + "principal.keytab"
 
-    //keytab = "/home/cdsw/drift/hadoop-files/svc_pwm_ret.keytab"
-    //krb5conf = "/home/cdsw/drift/hadoop-files/krb5.conf"
-     
-    var hadoop_conf: String = path + "core-site.xml"
-    var hive_conf: String =path + "hive-site.xml"
+    val realm = "CORP.RGBK.COM"
+   
+    var keytab: String = path + "svc_pwm_ret.keytab"
+   
+   
+    val conf = new Configuration()
+       
+
 
     def main(): Unit = {
+     
       System.out.println("connectURL: " + connectURL)
       System.out.println("schemaName: " + schemaName)
-      System.out.println("verticaUser: " + principal)
+      System.out.println("principal: " + principal)
       System.out.println("krb5conf: " + krb5conf)
       System.out.println("realm: " + realm)
       System.out.println("keytab: " + keytab)
+     
       try {
         Class.forName("org.apache.hive.jdbc.HiveDriver")
         System.out.println("Found HiveServer2 JDBC driver")
@@ -49,14 +67,22 @@ object TokenWriter  {
         case e: ClassNotFoundException =>
           System.out.println("Couldn't find HiveServer2 JDBC driver")
       }
+     
       try {
         val conf = new Configuration()
+       
         System.setProperty("java.security.krb5.conf", krb5conf)
+         
         conf.set("hadoop.security.authentication", "kerberos")
-        conf.addResource(hadoop_conf)
-        conf.addResource(hive_conf)
+        conf.set("hive.metastore.kerberos.principal", "hive/"+principal+"@"+realm)
+        conf.set("hive.metastore.sasl.enabled", "true")
+     
+
+
         UserGroupInformation.setConfiguration(conf)
+       
         dtTest()
+       
       } catch {
         case e: Throwable =>
           val stackString = new StringWriter
@@ -66,57 +92,69 @@ object TokenWriter  {
       }
     }
 
+ 
+   
+   
     @throws[Exception]
     private def dtTest(): Unit = {
-      val user = UserGroupInformation.loginUserFromKeytabAndReturnUGI(verticaUser + "@" + realm, keytab)
+      val user = UserGroupInformation.loginUserFromKeytabAndReturnUGI(principal + "@" + realm, keytab)
+      val credentials = new Credentials()
+
       user.doAs(new PrivilegedExceptionAction[Unit] {
         @throws[Exception]
         override def run: Unit = {
+         
           System.out.println("In doas: " + UserGroupInformation.getLoginUser)
           var con = DriverManager.getConnection(JDBCTest.connectURL)
           System.out.println("Connected to HiveServer2")
-          JDBCTest.showUser(con)
           System.out.println("Getting delegation token for user")
+         
           val token = con.asInstanceOf[HiveConnection].getDelegationToken(JDBCTest.principal, "hive/_HOST@" + JDBCTest.realm)
+         
           System.out.println("Got token: " + token)
           System.out.println("Closing original connection")
-          con.close()
-          /*
          
-          System.out.println("Setting delegation token in UGI")
-          Utils.setTokenStr(Utils.getUGI, token, "hiveserver2ClientToken")
-          con = DriverManager.getConnection(JDBCTest.connectURL + ";auth=delegationToken")
-          System.out.println("Connected to HiveServer2 with delegation token")
-          JDBCTest.showUser(con)
+         
+          val path = new Path("file:///home/cdsw/drift/token.dt")
+
+          val delegationToken = new Token()
+         
+          delegationToken.decodeFromUrlString(token)
+          delegationToken.setService(new Text("hms"))
+          delegationToken.setKind(new Text("HIVE_DELEGATION_TOKEN"))
+         
+          credentials.addToken(new Text("hms"), delegationToken)
+         
+          credentials.writeTokenStorageFile(path, JDBCTest.conf)
+         
+          println()
+         
+         
+         
+          val fileWriter =  new FileWriter("/home/cdsw/drift/hive_token.txt")
+          fileWriter.write(token)
+          fileWriter.flush()
+
+           
+           
+     
+         
           con.close()
-          */
-          JDBCTest.writeDelegationToken(token)
+           
+           
+     
+
+           
         }
       })
     }
+   
 
-    @throws[Exception]
-    private def showUser(con: Connection): Unit = {
-      val sql = "select current_user()"
-      val stmt = con.createStatement
-      val res = stmt.executeQuery(sql)
-      val result = new StringBuilder
-      while ( {
-        res.next
-      }) result.append(res.getString(1))
-      System.out.println("\tcurrent_user: " + result.toString)
-    }
 
-    private def writeDelegationToken(token: String): Unit = {
-      try {
-        val fileWriter = new FileWriter("hive_token.txt")
-        fileWriter.write(token)
-        fileWriter.flush()
-      } catch {
-        case e: Exception =>
-          e.printStackTrace()
-      }
-    }
+   
+ 
+
+
   }
  
 
